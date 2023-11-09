@@ -1,7 +1,8 @@
 from inspect import signature
+import types
 from typing import (
     Dict, List, Callable,
-    Any, cast, get_type_hints,
+    Any, Union, cast, get_origin, get_type_hints,
     Optional,
     )
 from dataclasses import dataclass
@@ -156,6 +157,10 @@ class SCPIHandler:
         The values in the arguments are strings because we have parsed a
         SCPI message string. Convert these string to the appropriate type
         using the annotations and call the handler method.
+
+        In the case of union values these are `cast` rather than converted
+        so care must be taken to ensure the return value is appropriately
+        handled.
         """
         new_args = ()
         new_kwargs = {}
@@ -167,10 +172,14 @@ class SCPIHandler:
             ]
 
         if kwargs:
-            new_kwargs = {
-                name: annotation_type(value)
-                for annotation_type, (name, value) in zip(self.annotations, kwargs.items())
-            }
+            new_kwargs = {}
+            for annotation_type, (name, value) in zip(self.annotations, kwargs.items()):
+                if get_origin(annotation_type) not in [types.UnionType, Union]:
+                    # annotation type is not union so process as usual
+                    value = annotation_type(value)
+                else:
+                    value = cast(annotation_type, value)
+                new_kwargs[name] = value
 
         return self.method(mocker_self, *new_args, **new_kwargs)
 
@@ -415,9 +424,11 @@ def compile_regular_expression(scpi_string: str) -> str:
     2) Strings between '<' and '>' will become keys when calling 'groupsdict'
     on a re.match object.
 
-    3) The regular expression is case insensitive.
+    3) Strings between '<' and '>' which end in a '?' will be marked as optional
 
-    4) SCPI strings containing "?" and "*" will be replaced with "\?" and "\*"
+    4) The regular expression is case insensitive.
+
+    5) SCPI strings containing "?" and "*" will be replaced with "\?" and "\*"
     in the regular expression
 
     Examples:
@@ -452,6 +463,10 @@ def compile_regular_expression(scpi_string: str) -> str:
     regex = re.sub(r"\?", r"\\?", scpi_string)
     regex = re.sub(r"\*", r"\\*", regex)
     regex = re.sub(r"<(?P<name>.*?)>", r"(?P<\g<name>>.*)", regex)
+
+    # if the param is marked as optional by having a ? in the name make the space
+    # before it and the capture group optional.
+    regex = re.sub(r" (?P<name>\(\?P<.*)\\\?>.*\)", r" ?\g<name>>.+)?", regex)
 
     regex = re.sub(
         "(?P<chr>[A-Z])(?P<name>[a-z]+)", r"\g<chr>(?:\g<name>)?",
