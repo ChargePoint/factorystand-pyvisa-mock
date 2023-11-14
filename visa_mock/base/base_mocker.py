@@ -1,4 +1,5 @@
 from inspect import signature
+from sys import version_info
 import types
 from typing import (
     Dict, List, Callable,
@@ -164,6 +165,10 @@ class SCPIHandler:
         """
         new_args = ()
         new_kwargs = {}
+        # from python 3.10: types.UnionType is the return type of unions
+        # constructed using the pipe operator (Python > 3.9) however it is
+        # not available until Python > 3.10
+        annotation_types = [Union] if version_info.minor < 10 else [Union, types.UnionType]
 
         if args:
             new_args = [
@@ -174,7 +179,7 @@ class SCPIHandler:
         if kwargs:
             new_kwargs = {}
             for annotation_type, (name, value) in zip(self.annotations, kwargs.items()):
-                if get_origin(annotation_type) not in [types.UnionType, Union]:
+                if get_origin(annotation_type) not in annotation_types:
                     # annotation type is not union so process as usual
                     value = annotation_type(value)
                 else:
